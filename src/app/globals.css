@@ -1,0 +1,761 @@
+@import 'tailwindcss';
+
+/* ------------------------------------------------------------------
+   Looma Comfort design tokens
+   ------------------------------------------------------------------ */
+@theme {
+  --color-ivory: #f8f5ef;
+  --color-surface: #fcfaf6;
+  --color-beige: #e8dccb;
+  --color-beige-soft: #f1e9dd;
+  --color-walnut: #4a3022;
+  --color-walnut-deep: #3a2519;
+  --color-walnut-soft: #6b4a37;
+  --color-gold: #c49a62;
+  --color-gold-text: #7a5a33;
+  --color-gold-soft: #e3cba5;
+  --color-taupe: #786653;
+  --color-taupe-deep: #655443;
+  --color-line: rgb(74 48 34 / 0.12);
+  --color-line-strong: rgb(74 48 34 / 0.22);
+  --color-success: #5b6b47;
+  --color-error: #9a3b2e;
+  --color-whatsapp: #25d366;
+
+  --font-serif: var(--font-cormorant), 'Cormorant Garamond', Georgia, serif;
+  --font-sans: var(--font-jost), 'Jost', system-ui, sans-serif;
+
+  --ease-looma: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-curtain: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --breakpoint-xs: 25rem;
+
+  --animate-rise: rise 0.9s var(--ease-looma) both;
+  --animate-fade: fade 0.8s var(--ease-looma) both;
+}
+
+:root {
+  --dur-micro: 0.2s;
+  --dur-ui: 0.4s;
+  --dur-reveal: 0.9s;
+  --dur-image: 1s;
+  --header-h: 64px;
+  --announce-h: 36px;
+  color-scheme: light;
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --header-h: 80px;
+  }
+}
+
+/* ------------------------------------------------------------------
+   Base
+   ------------------------------------------------------------------ */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background: var(--color-ivory);
+    color: var(--color-walnut);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  ::selection {
+    background: var(--color-gold-soft);
+    color: var(--color-walnut-deep);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 3px;
+    border-radius: 1px;
+  }
+  h1,
+  h2,
+  h3 {
+    font-variant-numeric: lining-nums;
+    font-family: var(--font-serif);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  img {
+    -webkit-user-drag: none;
+  }
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+  }
+  [hidden] {
+    display: none !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   Layout + typography utilities
+   ------------------------------------------------------------------ */
+@utility container-site {
+  width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
+  padding-inline: 16px;
+  @media (min-width: 640px) {
+    padding-inline: 24px;
+  }
+  @media (min-width: 1024px) {
+    padding-inline: 40px;
+  }
+}
+
+@utility section-y {
+  padding-block: 64px;
+  @media (min-width: 768px) {
+    padding-block: 96px;
+  }
+  @media (min-width: 1280px) {
+    padding-block: 112px;
+  }
+}
+
+@utility t-display {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: clamp(2.6rem, 1.6rem + 4.4vw, 4.9rem);
+  line-height: 1.02;
+  letter-spacing: -0.015em;
+}
+@utility t-h1 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: clamp(2.15rem, 1.6rem + 2.4vw, 3.5rem);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+}
+@utility t-h2 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  font-size: clamp(1.85rem, 1.45rem + 1.7vw, 2.75rem);
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+}
+@utility t-h3 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: clamp(1.35rem, 1.2rem + 0.6vw, 1.75rem);
+  line-height: 1.2;
+}
+@utility t-h4 {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: clamp(1.05rem, 1rem + 0.2vw, 1.2rem);
+  line-height: 1.35;
+}
+@utility t-lead {
+  font-size: clamp(1.05rem, 1rem + 0.25vw, 1.15rem);
+  line-height: 1.7;
+}
+@utility t-eyebrow {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  @media (min-width: 768px) {
+    font-size: 0.8rem;
+  }
+}
+@utility t-label {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+@utility tabular {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+@utility safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@layer components {
+/* Eyebrow with the logo's flanking rules: — COMFORT — */
+.eyebrow-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.eyebrow-rule::before,
+.eyebrow-rule::after {
+  content: '';
+  height: 1px;
+  width: 1.75rem;
+  background: currentColor;
+  opacity: 0.55;
+  transform-origin: center;
+}
+.eyebrow-rule[data-align='start']::after {
+  display: none;
+}
+.eyebrow-rule[data-align='start']::before {
+  transform-origin: left center;
+}
+[data-reveal-rule]::before,
+[data-reveal-rule]::after {
+  transition: transform 0.8s var(--ease-looma) 0.1s;
+}
+
+/* ------------------------------------------------------------------
+   Buttons: fill sweep (CSS only, works before JS loads)
+   ------------------------------------------------------------------ */
+.btn {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 48px;
+  padding: 0 1.75rem;
+  border-radius: 2px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition:
+    color var(--dur-ui) var(--ease-looma),
+    border-color var(--dur-ui) var(--ease-looma),
+    transform 0.15s var(--ease-looma);
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+.btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  transform: scaleX(0);
+  transform-origin: right center;
+  transition: transform 0.45s var(--ease-looma);
+}
+.btn:active {
+  transform: scale(0.98);
+}
+.btn .btn-icon {
+  transition: transform var(--dur-ui) var(--ease-looma);
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover::before {
+    transform: scaleX(1);
+    transform-origin: left center;
+  }
+  .btn:hover .btn-icon {
+    transform: translateX(3px);
+  }
+}
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.btn-primary {
+  background: var(--color-walnut);
+  color: var(--color-ivory);
+}
+.btn-primary::before {
+  background: var(--color-walnut-deep);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--color-walnut);
+  box-shadow: inset 0 0 0 1px var(--color-walnut);
+}
+.btn-secondary::before {
+  background: var(--color-walnut);
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn-secondary:hover {
+    color: var(--color-ivory);
+  }
+}
+.btn-light {
+  background: var(--color-ivory);
+  color: var(--color-walnut);
+}
+.btn-light::before {
+  background: var(--color-beige);
+}
+.btn-ghost-light {
+  background: transparent;
+  color: var(--color-ivory);
+  box-shadow: inset 0 0 0 1px rgb(248 245 239 / 0.7);
+}
+.btn-ghost-light::before {
+  background: var(--color-ivory);
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn-ghost-light:hover {
+    color: var(--color-walnut);
+  }
+}
+.btn-gold {
+  background: var(--color-gold);
+  color: var(--color-walnut-deep);
+}
+.btn-gold::before {
+  background: #b88b52;
+}
+.btn-lg {
+  min-height: 56px;
+  font-size: 0.875rem;
+}
+.btn-sm {
+  min-height: 40px;
+  padding: 0 1.1rem;
+  font-size: 0.75rem;
+}
+.btn-block {
+  width: 100%;
+}
+
+/* Text link with a gold underline that draws in */
+.link-u {
+  position: relative;
+  display: inline-block;
+}
+.link-u::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 1px;
+  background: var(--color-gold);
+  transform: scaleX(0);
+  transform-origin: right center;
+  transition: transform var(--dur-ui) var(--ease-looma);
+}
+.link-u[data-active='true']::after,
+.link-u:focus-visible::after {
+  transform: scaleX(1);
+}
+@media (hover: hover) and (pointer: fine) {
+  .link-u:hover::after {
+    transform: scaleX(1);
+    transform-origin: left center;
+  }
+}
+.link-arrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.link-arrow svg {
+  transition: transform var(--dur-ui) var(--ease-looma);
+}
+@media (hover: hover) and (pointer: fine) {
+  .link-arrow:hover svg {
+    transform: translateX(4px);
+  }
+}
+
+/* ------------------------------------------------------------------
+   Product + category card hovers (desktop only)
+   ------------------------------------------------------------------ */
+.media-zoom img {
+  transition:
+    transform 0.9s var(--ease-looma),
+    opacity 0.6s var(--ease-looma);
+}
+.card-alt-img {
+  opacity: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .group:hover .media-zoom img {
+    transform: scale(1.04);
+  }
+  .group:hover .card-alt-img {
+    opacity: 1;
+  }
+  .group:hover .card-underline {
+    transform: scaleX(1);
+    transform-origin: left center;
+  }
+  .group:hover .card-arrow {
+    transform: translateX(4px);
+  }
+}
+.card-underline {
+  transform: scaleX(0);
+  transform-origin: right center;
+  transition: transform 0.5s var(--ease-looma);
+}
+.card-arrow {
+  transition: transform var(--dur-ui) var(--ease-looma);
+}
+
+/* ------------------------------------------------------------------
+   Rich text
+   ------------------------------------------------------------------ */
+.prose-looma {
+  color: var(--color-walnut);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+.prose-looma > * + * {
+  margin-top: 1.1em;
+}
+.prose-looma h2 {
+  font-size: 1.75rem;
+  line-height: 1.2;
+  margin-top: 2em;
+}
+.prose-looma h3 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin-top: 1.6em;
+}
+.prose-looma a {
+  text-decoration: underline;
+  text-decoration-color: var(--color-gold);
+  text-underline-offset: 3px;
+}
+.prose-looma ul,
+.prose-looma ol {
+  padding-left: 1.25em;
+}
+.prose-looma ul {
+  list-style: disc;
+}
+.prose-looma ol {
+  list-style: decimal;
+}
+.prose-looma li + li {
+  margin-top: 0.4em;
+}
+.prose-looma li::marker {
+  color: var(--color-gold-text);
+}
+.prose-looma strong {
+  font-weight: 600;
+}
+.prose-looma blockquote {
+  border-left: 1px solid var(--color-gold);
+  padding-left: 1.25rem;
+  font-family: var(--font-serif);
+  font-size: 1.3rem;
+}
+}
+
+/* ------------------------------------------------------------------
+   Motion system
+   Above-the-fold: CSS animations (no JS needed).
+   Below-the-fold: GSAP reveals, pre-hidden only when html.motion-ok is set
+   by the inline head script (JS available, no reduced motion, no data saver).
+   ------------------------------------------------------------------ */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes line-up {
+  from {
+    transform: translate3d(0, 105%, 0);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes settle {
+  from {
+    transform: scale(1.06);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@keyframes kenburns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.06);
+  }
+}
+
+.anim-rise {
+  animation: rise 0.9s var(--ease-looma) both;
+  animation-delay: var(--d, 0s);
+}
+.anim-fade {
+  animation: fade 0.9s var(--ease-looma) both;
+  animation-delay: var(--d, 0s);
+}
+.anim-settle {
+  animation: settle 1.6s var(--ease-looma) both;
+}
+/* Masked line reveal for headings that are visible on first paint */
+.line-mask {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.08em;
+  margin-bottom: -0.08em;
+}
+.line-mask > span {
+  display: block;
+}
+.line-mask.anim > span {
+  animation: line-up 0.95s var(--ease-looma) both;
+  animation-delay: var(--d, 0s);
+}
+
+html.motion-ok [data-reveal]:not(.is-revealed) {
+  opacity: 0;
+}
+html.motion-ok [data-reveal='image']:not(.is-revealed) {
+  opacity: 1;
+}
+html.motion-ok [data-reveal='image']:not(.is-revealed) .reveal-curtain {
+  transform: scaleY(1);
+}
+.reveal-curtain {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: var(--color-ivory);
+  transform: scaleY(0);
+  transform-origin: top center;
+  pointer-events: none;
+}
+.bg-beige .reveal-curtain,
+[data-curtain='beige'] .reveal-curtain {
+  background: var(--color-beige);
+}
+html.motion-ok [data-reveal-rule]:not(.is-revealed)::before,
+html.motion-ok [data-reveal-rule]:not(.is-revealed)::after {
+  transform: scaleX(0);
+}
+
+/* Smooth scrolling (Lenis) */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: clip;
+}
+
+/* Sticky header: hide on scroll down, show on scroll up */
+.site-header {
+  transition:
+    transform var(--dur-ui) var(--ease-looma),
+    background-color var(--dur-ui) var(--ease-looma),
+    box-shadow var(--dur-ui) var(--ease-looma);
+  view-transition-name: site-header;
+}
+.site-header[data-hidden='true'] {
+  transform: translate3d(0, -100%, 0);
+}
+.site-header[data-scrolled='true'] {
+  background-color: rgb(248 245 239 / 0.96);
+  box-shadow: 0 1px 0 var(--color-line);
+}
+@media (hover: hover) and (pointer: fine) {
+  .site-header[data-scrolled='true'] {
+    background-color: rgb(248 245 239 / 0.8);
+    -webkit-backdrop-filter: blur(12px) saturate(1.2);
+    backdrop-filter: blur(12px) saturate(1.2);
+  }
+}
+
+/* Page-load intro: pure CSS so it never waits for JavaScript */
+.intro-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-ivory);
+  pointer-events: none;
+}
+html.intro-play .intro-overlay {
+  display: flex;
+  animation: intro-lift 0.8s var(--ease-curtain) 0.8s both;
+}
+html.intro-play .intro-overlay img {
+  animation: intro-mark 0.5s var(--ease-looma) both;
+}
+@keyframes intro-lift {
+  to {
+    transform: translate3d(0, -100%, 0);
+  }
+}
+@keyframes intro-mark {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+html.intro-play .hero-intro-delay {
+  --intro-delay: 1.2s;
+}
+
+/* Hero slide image: Ken Burns on the active slide */
+.hero-slide-media img {
+  transform-origin: 60% 50%;
+}
+.hero-slide[data-active='true'] .hero-slide-media img {
+  animation: kenburns 7s linear both;
+}
+@media (max-width: 767px) {
+  .hero-slide[data-active='true'] .hero-slide-media img {
+    animation-name: kenburns-sm;
+  }
+  @keyframes kenburns-sm {
+    from {
+      transform: scale(1);
+    }
+    to {
+      transform: scale(1.04);
+    }
+  }
+}
+.hero-slide .hero-line > span {
+  transform: translate3d(0, 105%, 0);
+  transition: transform 0.95s var(--ease-looma);
+  transition-delay: calc(var(--intro-delay, 0s) + var(--d, 0s));
+}
+.hero-slide .hero-fade {
+  opacity: 0;
+  transform: translate3d(0, 14px, 0);
+  transition:
+    opacity 0.8s var(--ease-looma),
+    transform 0.8s var(--ease-looma);
+  transition-delay: calc(var(--intro-delay, 0s) + var(--d, 0s));
+}
+.hero-slide[data-active='true'] .hero-line > span,
+.hero-slide[data-active='true'] .hero-fade {
+  transform: none;
+  opacity: 1;
+}
+/* First slide on page load: keyframes (not transitions) so the reveal plays without JavaScript */
+.hero-slide.is-initial[data-active='true'] .hero-line > span {
+  animation: line-up 0.95s var(--ease-looma) both;
+  animation-delay: calc(var(--intro-delay, 0s) + 0.15s + var(--d, 0s));
+}
+.hero-slide.is-initial[data-active='true'] .hero-fade {
+  animation: rise 0.85s var(--ease-looma) both;
+  animation-delay: calc(var(--intro-delay, 0s) + 0.15s + var(--d, 0s));
+}
+.hero-progress {
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+.hero-progress[data-running='true'] {
+  animation: hero-progress var(--hero-duration, 6.5s) linear both;
+}
+@keyframes hero-progress {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Page transitions (React <ViewTransition>) */
+::view-transition {
+  pointer-events: none;
+}
+::view-transition-old(.page) {
+  animation: 0.3s var(--ease-curtain) both vt-fade-out;
+}
+::view-transition-new(.page) {
+  animation: 0.5s var(--ease-looma) 0.12s both vt-rise-in;
+}
+::view-transition-group(site-header) {
+  animation: none;
+  z-index: 100;
+}
+::view-transition-old(site-header) {
+  display: none;
+}
+::view-transition-new(site-header) {
+  animation: none;
+}
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* Reduced motion: keep everything visible and still */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+  .hero-slide[data-active='true'] .hero-slide-media img {
+    animation: none !important;
+  }
+}
