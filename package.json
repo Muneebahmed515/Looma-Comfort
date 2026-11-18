@@ -12,6 +12,7 @@
     "test:e2e": "node scripts/e2e-smoke.mjs",
     "db:check": "tsx scripts/check-db.ts",
     "db:seed-file": "tsx scripts/generate-seed.ts",
+    "db:bundle": "tsx scripts/bundle-sql.ts",
     "brand:assets": "node scripts/brand-assets.mjs",
     "icons:generate": "node scripts/generate-icons.mjs"
   },

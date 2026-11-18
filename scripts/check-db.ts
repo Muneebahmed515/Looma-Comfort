@@ -4,6 +4,7 @@
 import { PGlite } from '@electric-sql/pglite'
 import { citext } from '@electric-sql/pglite/contrib/citext'
 import { readdirSync, readFileSync } from 'node:fs'
+import { bundleSql } from './bundle-sql'
 
 const STUBS = `
 create role anon nologin;
@@ -101,9 +102,15 @@ async function main() {
   await asRole('anon', null)
   check('sees only visible products', (await count('select count(*)::int as n from public.products')) === products - 1)
   check('cannot insert products', await fails(`insert into public.products (name, slug, price) values ('x', 'x', 1)`))
-  check('cannot update settings', (await count(`with u as (update public.site_settings set brand_name = 'x' returning 1) select count(*)::int as n from u`)) === 0)
+  check(
+    'cannot update settings',
+    (await count(`with u as (update public.site_settings set brand_name = 'x' returning 1) select count(*)::int as n from u`)) === 0,
+  )
   check('cannot read contact messages', (await count('select count(*)::int as n from public.contact_messages')) === 0)
-  check('cannot insert contact messages', await fails(`insert into public.contact_messages (name, phone, message) values ('a', '03001234567', 'hi')`))
+  check(
+    'cannot insert contact messages',
+    await fails(`insert into public.contact_messages (name, phone, message) values ('a', '03001234567', 'hi')`),
+  )
   check('cannot subscribe directly', await fails(`insert into public.newsletter_subscribers (email) values ('a@b.co')`))
   check('cannot insert reviews directly', await fails(`insert into public.reviews (customer_name, body) values ('a', 'b')`))
   check('sees only approved reviews', (await count(`select count(*)::int as n from public.reviews where status <> 'approved'`)) === 0)
@@ -117,7 +124,10 @@ async function main() {
   await db.exec(`insert into auth.users (id, email) values ('${stranger}', 'stranger@example.com'), ('${owner}', 'owner@example.com')`)
   await asRole('authenticated', stranger)
   check('cannot insert products', await fails(`insert into public.products (name, slug, price) values ('x', 'x', 1)`))
-  check('cannot delete categories', (await count(`with d as (delete from public.categories returning 1) select count(*)::int as n from d`)) === 0)
+  check(
+    'cannot delete categories',
+    (await count(`with d as (delete from public.categories returning 1) select count(*)::int as n from d`)) === 0,
+  )
   check('cannot make self admin', await fails(`insert into public.admin_users (user_id, role) values ('${stranger}', 'owner')`))
   check('cannot upload images', await fails(`insert into storage.objects (bucket_id, name) values ('products', 'x.webp')`))
 
@@ -126,8 +136,14 @@ async function main() {
   await db.exec(`insert into public.admin_users (user_id, email, role) values ('${owner}', 'owner@example.com', 'owner')`)
   await asRole('authenticated', owner)
   check('sees hidden products', (await count('select count(*)::int as n from public.products')) === products)
-  check('can insert product', !(await fails(`insert into public.products (name, slug, price, is_visible) values ('Test Chair', 'test-chair', 1000, true)`)))
-  check('can update settings', (await count(`with u as (update public.site_settings set tagline = 'Hello' returning 1) select count(*)::int as n from u`)) === 1)
+  check(
+    'can insert product',
+    !(await fails(`insert into public.products (name, slug, price, is_visible) values ('Test Chair', 'test-chair', 1000, true)`)),
+  )
+  check(
+    'can update settings',
+    (await count(`with u as (update public.site_settings set tagline = 'Hello' returning 1) select count(*)::int as n from u`)) === 1,
+  )
   check('can upload images', !(await fails(`insert into storage.objects (bucket_id, name) values ('products', 'a/b.webp')`)))
   check('cannot upload to unknown bucket', await fails(`insert into storage.objects (bucket_id, name) values ('secret', 'a.webp')`))
   check('activity is logged', (await count(`select count(*)::int as n from public.activity_log where user_id = '${owner}'`)) >= 2)
@@ -141,11 +157,29 @@ async function main() {
   const pid = (await db.query<{ id: string }>(`select id from public.products where slug = 'cove-side-table'`)).rows[0]!.id
   const before = await count(`select order_clicks as n from public.product_stats where product_id = '${pid}'`)
   await db.exec(`insert into public.whatsapp_clicks (product_id, context) values ('${pid}', 'product')`)
-  check('whatsapp click increments counter', (await count(`select order_clicks as n from public.product_stats where product_id = '${pid}'`)) === before + 1)
-  await db.exec(`insert into vault.secrets values ('revalidate_url', 'https://example.com/api/revalidate'), ('revalidate_secret', 's3cret')`)
+  check(
+    'whatsapp click increments counter',
+    (await count(`select order_clicks as n from public.product_stats where product_id = '${pid}'`)) === before + 1,
+  )
+  await db.exec(
+    `insert into vault.secrets values ('revalidate_url', 'https://example.com/api/revalidate'), ('revalidate_secret', 's3cret')`,
+  )
   await db.exec(`update public.offers set starts_at = now() - interval '2 minutes' where name = 'Dining Week'`)
   await db.exec('select public.notify_schedule_boundaries()')
   check('scheduler pings the site when an offer starts', (await count('select count(*)::int as n from net.requests')) === 1)
+
+  console.log('\none-file setup (supabase/setup.sql)')
+  const setup = readFileSync('supabase/setup.sql', 'utf8')
+  check('setup.sql is up to date (npm run db:bundle)', setup === bundleSql())
+  const fresh = new PGlite({ extensions: { citext } })
+  await fresh.exec(STUBS)
+  const setupError = await fresh.exec(setup.replace(/create extension if not exists (pg_cron|pg_net)[^;]*;/g, '')).then(
+    () => null,
+    (e: unknown) => String(e),
+  )
+  check('setup.sql runs on an empty database', setupError === null, setupError ?? '')
+  if (!setupError)
+    check('setup.sql adds the starter products', (await fresh.query('select 1 from public.products')).rows.length === products)
 
   console.log(failures ? `\n${failures} check(s) failed` : '\nall database checks passed')
   process.exit(failures ? 1 : 0)

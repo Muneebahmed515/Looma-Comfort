@@ -30,20 +30,16 @@ Open http://localhost:3000. With no Supabase keys, the site runs in **demo mode*
    - **Region:** *South Asia (Mumbai)*, the closest to Pakistan.
    - Save the database password in a password manager.
 2. **Create the database.** Use one of these two ways.
-   - **Easiest (no tools):** open **SQL Editor** in Supabase. Paste and run each file in `supabase/migrations/` **in order**:
-     1. `20261012000001_schema.sql`
-     2. `20261012000002_security.sql`
-     3. `20261012000003_storage.sql`
-     4. `20261012000004_scheduler.sql`
-
-     Then run `supabase/seed.sql` to load the starting catalogue, pages, FAQs and settings.
-     If the scheduler file reports that `pg_cron` is unavailable, enable **pg_cron** and **pg_net** under **Database → Extensions** and run it again.
+   - **Easiest (no tools):** open **SQL Editor** in Supabase, paste the whole of `supabase/setup.sql` and click **Run**, once.
+     It creates every table, the security rules, the image folders and the scheduler, and loads the starting catalogue, pages, FAQs and settings.
+     If it reports that `pg_cron` or `pg_net` is unavailable, enable both under **Database → Extensions** and run it again (a failed run changes nothing).
+     `setup.sql` is all of `supabase/migrations/` plus `supabase/seed.sql` in one file; after changing either, run `npm run db:bundle`.
    - **Or with the CLI:** run `npx supabase login`, then `npx supabase link --project-ref <your-ref>`, then `npx supabase db push --include-seed`.
 3. **Authentication → Sign In / Providers:**
    - Turn **off** "Allow new users to sign up". Only people you invite can become admins.
 4. **Authentication → URL Configuration:**
    - **Site URL:** `https://your-domain.com`
-   - **Redirect URLs:** add `https://your-domain.com/auth/callback` and `http://localhost:3000/auth/callback`
+   - **Redirect URLs:** add `https://your-domain.com/**` and `http://localhost:3000/**` (password-reset links come back to `/auth/callback?next=…`)
 5. **Create your owner account.**
    - In **Authentication → Users**, click **Add user** (or invite yourself) with your email and a strong password.
    - Then in the **SQL Editor**, run:
