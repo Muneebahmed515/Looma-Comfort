@@ -1,4 +1,4 @@
-// Demo catalogue used when Supabase isn't connected, and the source for supabase/seed.sql.
+// Demo catalogue used when the database isn't connected, and the source for db/seed.sql.
 // Every piece of content here can be edited or replaced from the admin panel.
 import { stableId } from '../ids'
 import type {

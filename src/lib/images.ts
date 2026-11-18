@@ -1,4 +1,4 @@
-import { SITE_URL, SUPABASE_URL } from './env'
+import { MEDIA_BASE_URL, SITE_URL } from './env'
 
 /** Widths generated in the browser for every uploaded image. */
 export const STORAGE_WIDTHS = [480, 960, 1600] as const
@@ -16,8 +16,9 @@ export function pickStorageWidth(requested: number): number {
   return STORAGE_WIDTHS.find((w) => w >= requested) ?? STORAGE_WIDTHS[STORAGE_WIDTHS.length - 1]
 }
 
+/** Uploaded images live in Vercel Blob under the same path as their ref. */
 export function storagePublicUrl(path: string): string {
-  return `${SUPABASE_URL}/storage/v1/object/public/${path}`
+  return `${MEDIA_BASE_URL}/${path}`
 }
 
 /** Full URL of an image at a given width (used for Open Graph, JSON-LD, WhatsApp previews). */

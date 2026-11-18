@@ -3,8 +3,8 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { isSupabaseConfigured } from '@/lib/env'
-import { getSupabaseBrowser } from '@/lib/supabase/browser'
+import { pendingTwoStep, signInWithPassword, verifyTwoStepCode } from '@/lib/admin/auth-actions'
+import { isDbConfigured } from '@/lib/env'
 import { adminInput } from './controls'
 
 export function LoginForm({ next, notice }: { next: string; notice?: string }) {
@@ -13,7 +13,6 @@ export function LoginForm({ next, notice }: { next: string; notice?: string }) {
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [step, setStep] = useState<'password' | 'mfa'>('password')
-  const [factorId, setFactorId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(notice ?? null)
   const [busy, setBusy] = useState(false)
 
@@ -22,35 +21,17 @@ export function LoginForm({ next, notice }: { next: string; notice?: string }) {
     router.refresh()
   }
 
-  const needMfa = async () => {
-    const supabase = getSupabaseBrowser()
-    const { data } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
-    if (data && data.nextLevel === 'aal2' && data.currentLevel !== 'aal2') {
-      const { data: factors } = await supabase.auth.mfa.listFactors()
-      const totp = factors?.totp?.find((f: { status: string }) => f.status === 'verified')
-      if (totp) {
-        setFactorId(totp.id)
-        setStep('mfa')
-        return true
-      }
-    }
-    return false
-  }
-
-  // Signed in already but still needs the two-factor code (redirected here with ?mfa=1).
+  // Password already checked but still needs the two-factor code (redirected here with ?mfa=1).
   useEffect(() => {
-    if (!isSupabaseConfigured) return
-    void (async () => {
-      const { data } = await getSupabaseBrowser().auth.getUser()
-      if (data.user) await needMfa()
-    })()
+    if (!isDbConfigured) return
+    void pendingTwoStep().then((pending) => pending && setStep('mfa'))
   }, [])
 
-  if (!isSupabaseConfigured) {
+  if (!isDbConfigured) {
     return (
       <div className="space-y-5 text-center">
         <p className="text-[0.92rem] text-taupe">
-          Supabase is not connected yet, so the admin runs in <strong className="text-walnut">demo mode</strong>: you can explore every screen with sample data, but nothing is saved.
+          The database is not connected yet, so the admin runs in <strong className="text-walnut">demo mode</strong>: you can explore every screen with sample data, but nothing is saved.
         </p>
         <Link href="/admin" className="btn btn-primary btn-block">
           Open the admin preview
@@ -63,29 +44,23 @@ export function LoginForm({ next, notice }: { next: string; notice?: string }) {
     e.preventDefault()
     setBusy(true)
     setError(null)
-    const supabase = getSupabaseBrowser()
-    const { error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
-    if (err) {
-      setBusy(false)
-      setError(err.message === 'Invalid login credentials' ? 'That email and password do not match.' : err.message)
-      return
-    }
-    if (await needMfa()) {
-      setBusy(false)
-      return
-    }
+    const res = await signInWithPassword(email, password).catch(() => ({ ok: false as const, message: 'Could not sign in. Please try again.' }))
+    setBusy(false)
+    if (!res.ok) return setError(res.message)
+    if (res.mfa) return setStep('mfa')
     go()
   }
 
   const verify = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!factorId) return
     setBusy(true)
     setError(null)
-    const { error: err } = await getSupabaseBrowser().auth.mfa.challengeAndVerify({ factorId, code: code.trim() })
+    const res = await verifyTwoStepCode(code.trim()).catch(() => ({ ok: false, message: 'Could not check the code. Please try again.' }))
     setBusy(false)
-    if (err) setError('That code did not work. Check your authenticator app and try again.')
-    else go()
+    if (!res.ok) {
+      setError(res.message ?? 'That code did not work.')
+      if (res.message?.includes('expired')) setStep('password')
+    } else go()
   }
 
   if (step === 'mfa') {

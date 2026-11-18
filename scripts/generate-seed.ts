@@ -1,10 +1,10 @@
-// Writes supabase/seed.sql from the demo catalogue (src/lib/demo/data.ts), so a fresh
-// Supabase database starts with exactly the content you see in demo mode.
+// Writes db/seed.sql from the demo catalogue (src/lib/demo/data.ts), so a fresh
+// database starts with exactly the content you see in demo mode.
 // Run: npx tsx scripts/generate-seed.ts
 import { writeFileSync } from 'node:fs'
 import { demoRows } from '../src/lib/demo/data'
 
-// Columns that exist in the database for each table (see supabase/migrations).
+// Columns that exist in the database for each table (see db/migrations).
 const COLUMNS: Record<string, string[]> = {
   categories: ['id', 'parent_id', 'name', 'slug', 'description', 'image', 'banner', 'sort_order', 'show_in_menu', 'is_visible', 'seo_title', 'seo_description'],
   materials: ['id', 'name', 'slug', 'sort_order'],
@@ -72,5 +72,5 @@ const parts = [
   insert('faqs', demoRows.faqs),
 ]
 
-writeFileSync('supabase/seed.sql', parts.join('\n'))
-console.log('wrote supabase/seed.sql')
+writeFileSync('db/seed.sql', parts.join('\n'))
+console.log('wrote db/seed.sql')

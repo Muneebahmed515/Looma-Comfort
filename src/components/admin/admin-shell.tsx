@@ -160,7 +160,7 @@ export function AdminShell({ children, user, badges = {} }: ShellProps) {
       <div className="min-w-0">
         {user.demo && (
           <div className="border-b border-gold/40 bg-gold-soft/50 px-4 py-2.5 text-center text-[0.82rem] text-walnut lg:px-8">
-            <strong className="font-medium">Demo mode.</strong> You are exploring the admin with sample data. Connect Supabase (see README) to sign in and save changes.
+            <strong className="font-medium">Demo mode.</strong> You are exploring the admin with sample data. Connect the Neon database (see README) to sign in and save changes.
           </div>
         )}
         <div className="hidden items-center justify-end gap-4 border-b border-line px-8 py-3 lg:flex">

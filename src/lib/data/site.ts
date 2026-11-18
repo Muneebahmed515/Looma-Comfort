@@ -1,8 +1,8 @@
 import 'server-only'
 import { cacheLife, cacheTag } from 'next/cache'
 import { demoRows } from '../demo/data'
-import { isSupabaseConfigured } from '../env'
-import { createPublicClient } from '../supabase/public'
+import { queryOne } from '../db'
+import { isDbConfigured } from '../env'
 import { buildSiteData, type CatalogProduct, type CategoryNode, type SiteData } from './build'
 import { fetchSiteRows } from './rows'
 
@@ -17,7 +17,7 @@ export async function getSiteData(): Promise<SiteData> {
   'use cache'
   cacheLife('hours')
   cacheTag(SITE_TAG)
-  const rows = isSupabaseConfigured ? await fetchSiteRows(createPublicClient()) : demoRows
+  const rows = isDbConfigured ? await fetchSiteRows() : demoRows
   return buildSiteData(rows, Date.now())
 }
 
@@ -42,7 +42,7 @@ export async function getPage(slug: string) {
 
 /** Looks up a renamed product/category so old links redirect instead of 404ing. */
 export async function findRedirect(entity: 'product' | 'category' | 'collection', oldSlug: string): Promise<string | null> {
-  if (!isSupabaseConfigured) return null
+  if (!isDbConfigured) return null
   return lookupRedirect(entity, oldSlug)
 }
 
@@ -50,7 +50,6 @@ async function lookupRedirect(entity: string, oldSlug: string): Promise<string |
   'use cache'
   cacheLife('hours')
   cacheTag(SITE_TAG)
-  const client = createPublicClient()
-  const { data } = await client.rpc('resolve_slug_redirect', { p_entity: entity, p_old_slug: oldSlug })
-  return typeof data === 'string' ? data : null
+  const row = await queryOne<{ slug: string | null }>('select public.resolve_slug_redirect($1, $2) as slug', [entity, oldSlug])
+  return row?.slug ?? null
 }

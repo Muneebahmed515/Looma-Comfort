@@ -1,8 +1,7 @@
 'use client'
 
-import { STORAGE_WIDTHS } from '@/lib/images'
-import { isSupabaseConfigured } from '@/lib/env'
-import { getSupabaseBrowser } from '@/lib/supabase/browser'
+import { isDbConfigured } from '@/lib/env'
+import { STORAGE_WIDTHS, storagePublicUrl } from '@/lib/images'
 import type { ImageAsset } from '@/lib/types'
 
 export type Bucket = 'products' | 'categories' | 'banners' | 'content' | 'brand'
@@ -48,11 +47,11 @@ function toBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promi
 
 /**
  * Compresses a photo in the browser into three sizes (480 / 960 / 1600 px wide) and uploads
- * them to Supabase Storage. WebP where the browser can encode it, high-quality JPEG otherwise
+ * them to Vercel Blob (through /api/admin/upload). WebP where the browser can encode it, high-quality JPEG otherwise
  * (some older iPhones). Returns the image asset to store in the database.
  */
 export async function compressAndUpload(file: File, bucket: Bucket, folder: string, alt: string, onProgress?: (p: number) => void): Promise<ImageAsset> {
-  if (!isSupabaseConfigured) throw new Error('Demo mode: connect Supabase to upload images.')
+  if (!isDbConfigured) throw new Error('Demo mode: connect the database to upload images.')
   if (!file.type.startsWith('image/') && !/\.(heic|heif)$/i.test(file.name)) throw new Error('Please choose an image file.')
   if (file.size > MAX_INPUT_BYTES) throw new Error('This photo is very large. Please use one under 30 MB.')
 
@@ -68,7 +67,6 @@ export async function compressAndUpload(file: File, bucket: Bucket, folder: stri
     const type = webp ? 'image/webp' : 'image/jpeg'
     const ext = webp ? 'webp' : 'jpg'
 
-    const supabase = getSupabaseBrowser()
     let done = 0
     for (const target of STORAGE_WIDTHS) {
       const w = Math.min(target, img.width)
@@ -76,8 +74,12 @@ export async function compressAndUpload(file: File, bucket: Bucket, folder: stri
       const blob = await toBlob(draw(img.source, w, h), type, target >= 1600 ? 0.8 : 0.78)
       if (!blob) throw new Error('Could not process this image.')
       const path = `${folder}/${id}-${target}.${ext}`
-      const { error } = await supabase.storage.from(bucket).upload(path, blob, { contentType: type, cacheControl: '31536000', upsert: false })
-      if (error) throw new Error(error.message.includes('row-level security') ? 'You do not have permission to upload.' : `Upload failed: ${error.message}`)
+      const body = new FormData()
+      body.set('path', `${bucket}/${path}`)
+      body.set('file', blob, path.split('/').pop())
+      const res = await fetch('/api/admin/upload', { method: 'POST', body })
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; message?: string } | null
+      if (!res.ok || !json?.ok) throw new Error(json?.message ?? 'Upload failed. Please try again.')
       done++
       onProgress?.(done / STORAGE_WIDTHS.length)
     }
@@ -100,7 +102,6 @@ export async function compressAndUpload(file: File, bucket: Bucket, folder: stri
 /** Preview URL for an image asset inside the admin. */
 export function previewUrl(asset: ImageAsset, width = 480): string {
   if (asset.ref.startsWith('/') || /^https?:/.test(asset.ref)) return asset.ref
-  const base = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '')
   const size = width <= 480 ? 480 : width <= 960 ? 960 : 1600
-  return `${base}/storage/v1/object/public/${asset.ref.replace(/(\.\w+)$/, `-${size}$1`)}`
+  return storagePublicUrl(asset.ref.replace(/(\.\w+)$/, `-${size}$1`))
 }

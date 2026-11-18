@@ -3,8 +3,8 @@ import type { NextRequest } from 'next/server'
 import { SITE_TAG } from '@/lib/data/site'
 
 /**
- * Called by the database scheduler (pg_cron) when an offer, banner or slide starts or ends,
- * so prices and banners update without anyone pressing a button.
+ * Refreshes the cached site on demand, e.g. from an external scheduler (cron-job.org, GitHub
+ * Actions) when an offer, banner or slide starts or ends: POST with "Authorization: Bearer <REVALIDATE_SECRET>".
  */
 export async function POST(request: NextRequest) {
   const secret = process.env.REVALIDATE_SECRET

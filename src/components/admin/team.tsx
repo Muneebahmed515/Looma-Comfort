@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import { toast } from 'sonner'
-import { inviteAdmin, removeAdmin } from '@/lib/admin/actions'
+import { inviteAdmin, removeAdmin, resetMemberPassword } from '@/lib/admin/actions'
 import { formatDate } from '@/lib/format'
 import { adminInput } from './controls'
 import { Pill } from './resource-list'
@@ -22,6 +22,7 @@ export function Team({ members, meId, isOwner }: { members: Member[]; meId: stri
   const [name, setName] = useState('')
   const [role, setRole] = useState<'owner' | 'editor'>('editor')
   const [pending, start] = useTransition()
+  const [issued, setIssued] = useState<{ email: string; password: string } | null>(null)
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
@@ -36,6 +37,22 @@ export function Team({ members, meId, isOwner }: { members: Member[]; meId: stri
             </span>
             <span className="flex shrink-0 items-center gap-3">
               <Pill tone={m.role === 'owner' ? 'live' : 'neutral'}>{m.role === 'owner' ? 'Owner' : 'Editor'}</Pill>
+              {isOwner && m.user_id !== meId && (
+                <button
+                  type="button"
+                  className="text-[0.82rem] text-taupe"
+                  onClick={() => {
+                    if (!window.confirm(`Create a new one-time password for ${m.email}? Their current password stops working.`)) return
+                    start(async () => {
+                      const res = await resetMemberPassword(m.user_id)
+                      if (res.ok && res.data) setIssued({ email: m.email ?? '', password: res.data.password })
+                      else toast.error(res.ok ? 'Could not reset' : res.message)
+                    })
+                  }}
+                >
+                  New password
+                </button>
+              )}
               {isOwner && m.user_id !== meId && (
                 <button
                   type="button"
@@ -60,7 +77,18 @@ export function Team({ members, meId, isOwner }: { members: Member[]; meId: stri
       </ul>
 
       <div className="rounded-[2px] border border-line bg-surface p-5 sm:p-6">
-        <h2 className="font-serif text-[1.3rem] font-semibold text-walnut">Invite someone</h2>
+        <h2 className="font-serif text-[1.3rem] font-semibold text-walnut">Add someone</h2>
+        {issued && (
+          <div className="mt-4 space-y-2 rounded-[2px] border border-gold/50 bg-gold-soft/25 p-4" role="status">
+            <p className="text-[0.85rem] text-walnut">
+              One-time password for <strong>{issued.email}</strong>. Send it to them privately (e.g. WhatsApp). It is shown only once.
+            </p>
+            <p className="tabular rounded-[2px] bg-surface px-3 py-2 text-center font-mono text-[1.05rem] tracking-wider text-walnut select-all">{issued.password}</p>
+            <button type="button" className="text-[0.82rem] text-taupe" onClick={() => setIssued(null)}>
+              Done
+            </button>
+          </div>
+        )}
         {isOwner ? (
           <form
             className="mt-4 space-y-4"
@@ -69,7 +97,8 @@ export function Team({ members, meId, isOwner }: { members: Member[]; meId: stri
               start(async () => {
                 const res = await inviteAdmin(email, role, name)
                 if (res.ok) {
-                  toast.success(res.message ?? 'Invited')
+                  toast.success(res.message ?? 'Added')
+                  if (res.data) setIssued({ email: email.trim().toLowerCase(), password: res.data.password })
                   setEmail('')
                   setName('')
                   router.refresh()
@@ -93,9 +122,9 @@ export function Team({ members, meId, isOwner }: { members: Member[]; meId: stri
               </select>
             </label>
             <button type="submit" disabled={pending} className="btn btn-primary btn-block">
-              {pending ? 'Sending…' : 'Send invitation'}
+              {pending ? 'Adding…' : 'Add to team'}
             </button>
-            <p className="text-[0.78rem] text-taupe">They receive an email with a link to set their password.</p>
+            <p className="text-[0.78rem] text-taupe">You get a one-time password to give them. They sign in at /admin and choose their own under Account.</p>
           </form>
         ) : (
           <p className="mt-3 text-[0.9rem] text-taupe">Only the owner can invite or remove people.</p>

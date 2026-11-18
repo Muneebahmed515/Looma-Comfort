@@ -1,4 +1,4 @@
-// Row shapes mirror the Supabase tables in supabase/migrations.
+// Row shapes mirror the database tables in db/migrations.
 // Image fields hold an "image ref": either a local path (/demo/x.webp) or a storage key
 // (products/<id>/<image>.webp), resolved to URLs by src/lib/images.ts.
 

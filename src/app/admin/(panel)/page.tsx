@@ -7,9 +7,8 @@ import { clickTotals, listActivity, listMessages, storageUsageBytes, topRequeste
 import { buildSiteData } from '@/lib/data/build'
 import { fetchSiteRows } from '@/lib/data/rows'
 import { demoRows } from '@/lib/demo/data'
-import { isSupabaseConfigured } from '@/lib/env'
+import { isDbConfigured } from '@/lib/env'
 import { formatDateTime } from '@/lib/format'
-import { createSupabaseServer } from '@/lib/supabase/server'
 
 // Per-user page: allowed to wait for the server on navigation.
 export const instant = false
@@ -43,7 +42,7 @@ function greeting() {
 
 export default async function DashboardPage() {
   const admin = await requireAdmin()
-  const rows = isSupabaseConfigured ? await fetchSiteRows(await createSupabaseServer()) : demoRows
+  const rows = isDbConfigured ? await fetchSiteRows({ includeHidden: true }) : demoRows
   const snapshot = buildSnapshot(rows)
   const [activity, messages, top, clicks, storage] = await Promise.all([listActivity(10), listMessages(), topRequested(30), clickTotals(30), storageUsageBytes()])
 
@@ -59,7 +58,7 @@ export default async function DashboardPage() {
     { done: !rows.products.some((p) => p.images.some((i) => i.ref.startsWith('/demo/'))), label: 'Replace demo photos with your own', href: '/admin/products' },
     { done: Boolean(s.instagram_url && s.instagram_url !== 'https://www.instagram.com/'), label: 'Link your Instagram, Facebook and TikTok', href: '/admin/settings' },
     { done: Boolean(s.ga4_id || s.meta_pixel_id), label: 'Connect Google Analytics or Meta Pixel', href: '/admin/settings' },
-    { done: isSupabaseConfigured, label: 'Connect Supabase so changes can be saved', href: '#' },
+    { done: isDbConfigured, label: 'Connect the Neon database so changes can be saved', href: '#' },
   ]
   const remaining = checklist.filter((c) => !c.done)
 

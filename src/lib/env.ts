@@ -1,10 +1,18 @@
-export const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').replace(/\/$/, '')
+/** Neon connection string (server only). */
+export const DATABASE_URL = process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? ''
 
-export const SUPABASE_PUBLISHABLE_KEY =
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+/**
+ * True when the site reads from the Neon database; otherwise it runs on the bundled demo
+ * catalogue. NEXT_PUBLIC_DB_CONFIGURED is set at build time by next.config.ts so client
+ * components (login form, uploads) know too.
+ */
+export const isDbConfigured = Boolean(DATABASE_URL) || process.env.NEXT_PUBLIC_DB_CONFIGURED === '1'
 
-/** True when the site reads from Supabase; otherwise it runs on the bundled demo catalogue. */
-export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY)
+/**
+ * Public base URL of the Vercel Blob store that holds uploaded images, e.g.
+ * https://abc123.public.blob.vercel-storage.com (worked out from BLOB_READ_WRITE_TOKEN in next.config.ts).
+ */
+export const MEDIA_BASE_URL = (process.env.NEXT_PUBLIC_MEDIA_BASE_URL ?? '').replace(/\/$/, '')
 
 function resolveSiteUrl(): string {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL

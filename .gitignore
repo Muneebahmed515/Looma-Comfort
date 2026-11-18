@@ -45,5 +45,6 @@ next-env.d.ts
 
 # local QA output
 /.shots
-/supabase/.temp
-/supabase/.branches
+
+# old Supabase CLI cache (no longer used)
+/supabase/

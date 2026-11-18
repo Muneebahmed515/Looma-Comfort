@@ -1,10 +1,11 @@
 import 'server-only'
 import { demoRows } from '../demo/data'
-import { isSupabaseConfigured } from '../env'
+import { col, query, queryOne, table as tableName } from '../db'
+import { isDbConfigured } from '../env'
 import { stableId } from '../ids'
-import { createSupabaseServer } from '../supabase/server'
 import type { ActivityRow, ContactMessageRow, SubscriberRow } from '../types'
 import type { RelationSource } from './fields'
+import { mediaUsageBytes } from '../media'
 
 type Row = Record<string, unknown> & { id: string }
 
@@ -24,7 +25,7 @@ const DEMO_TABLES: Record<string, Row[]> = {
 }
 
 export async function listRows(table: string, sort: { column: string; ascending: boolean }): Promise<Row[]> {
-  if (!isSupabaseConfigured) {
+  if (!isDbConfigured) {
     const rows = [...(DEMO_TABLES[table] ?? [])]
     return rows.sort((a, b) => {
       const x = a[sort.column] as string | number | null
@@ -34,17 +35,13 @@ export async function listRows(table: string, sort: { column: string; ascending:
       return (x < y ? -1 : x > y ? 1 : 0) * (sort.ascending ? 1 : -1)
     })
   }
-  const db = await createSupabaseServer()
-  const { data, error } = await db.from(table).select('*').order(sort.column, { ascending: sort.ascending, nullsFirst: false }).limit(2000)
-  if (error) throw new Error(error.message)
-  return (data ?? []) as Row[]
+  return query<Row>(`select * from ${tableName(table)} order by ${col(sort.column)} ${sort.ascending ? 'asc' : 'desc'} nulls last limit 2000`)
 }
 
 export async function getRow(table: string, id: string): Promise<Row | null> {
-  if (!isSupabaseConfigured) return DEMO_TABLES[table]?.find((r) => r.id === id) ?? null
-  const db = await createSupabaseServer()
-  const { data } = await db.from(table).select('*').eq('id', id).maybeSingle()
-  return (data as Row | null) ?? null
+  if (!isDbConfigured) return DEMO_TABLES[table]?.find((r) => r.id === id) ?? null
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null
+  return queryOne<Row>(`select * from ${tableName(table)} where id = $1`, [id])
 }
 
 export type RelationOptions = Record<RelationSource, { value: string; label: string; hint?: string }[]>
@@ -71,9 +68,8 @@ export async function relationOptions(): Promise<RelationOptions> {
 }
 
 export async function getSettingsRow(): Promise<Record<string, unknown>> {
-  if (!isSupabaseConfigured) return demoRows.settings as unknown as Record<string, unknown>
-  const db = await createSupabaseServer()
-  const { data } = await db.from('site_settings').select('*').eq('id', 1).maybeSingle()
+  if (!isDbConfigured) return demoRows.settings as unknown as Record<string, unknown>
+  const data = await queryOne('select * from public.site_settings where id = 1')
   return { ...(demoRows.settings as unknown as Record<string, unknown>), ...(data ?? {}) }
 }
 
@@ -111,78 +107,66 @@ const DEMO_MESSAGES: ContactMessageRow[] = [
 ]
 
 export async function listMessages(): Promise<ContactMessageRow[]> {
-  if (!isSupabaseConfigured) return DEMO_MESSAGES
-  const db = await createSupabaseServer()
-  const { data } = await db.from('contact_messages').select('*').order('created_at', { ascending: false }).limit(500)
-  return (data ?? []) as ContactMessageRow[]
+  if (!isDbConfigured) return DEMO_MESSAGES
+  return query<ContactMessageRow>('select * from public.contact_messages order by created_at desc limit 500')
 }
 
 export async function listSubscribers(): Promise<SubscriberRow[]> {
-  if (!isSupabaseConfigured)
+  if (!isDbConfigured)
     return [
       { id: stableId('sub:1'), email: 'ayesha@example.com', source: 'footer', created_at: '2026-10-09T10:00:00.000Z', unsubscribed_at: null },
       { id: stableId('sub:2'), email: 'hamza@example.com', source: 'footer', created_at: '2026-10-07T18:30:00.000Z', unsubscribed_at: null },
     ]
-  const db = await createSupabaseServer()
-  const { data } = await db.from('newsletter_subscribers').select('*').order('created_at', { ascending: false }).limit(5000)
-  return (data ?? []) as SubscriberRow[]
+  return query<SubscriberRow>('select * from public.newsletter_subscribers order by created_at desc limit 5000')
 }
 
 export async function listActivity(limit = 12): Promise<ActivityRow[]> {
-  if (!isSupabaseConfigured)
+  if (!isDbConfigured)
     return [
       { id: 3, user_id: null, user_email: 'demo@loomacomfort.com', action: 'update', entity_type: 'products', entity_id: null, entity_label: 'Round Sheesham Coffee Table', created_at: '2026-10-11T16:02:00.000Z' },
       { id: 2, user_id: null, user_email: 'demo@loomacomfort.com', action: 'insert', entity_type: 'offers', entity_id: null, entity_label: 'White Friday Sofa Sale', created_at: '2026-10-10T11:40:00.000Z' },
       { id: 1, user_id: null, user_email: 'demo@loomacomfort.com', action: 'update', entity_type: 'hero_slides', entity_id: null, entity_label: 'Crafted for the way you live', created_at: '2026-10-09T08:15:00.000Z' },
     ]
-  const db = await createSupabaseServer()
-  const { data } = await db.from('activity_log').select('*').order('created_at', { ascending: false }).limit(limit)
-  return (data ?? []) as ActivityRow[]
+  return query<ActivityRow>('select * from public.activity_log order by created_at desc limit $1', [limit])
 }
 
 export async function topRequested(days = 30): Promise<{ product_id: string; name: string; slug: string; clicks: number }[]> {
   const products = await listRows('products', { column: 'name', ascending: true })
   const byId = new Map(products.map((p) => [p.id, p]))
-  if (!isSupabaseConfigured) {
+  if (!isDbConfigured) {
     return demoRows.products
       .slice()
       .sort((a, b) => b.order_clicks - a.order_clicks)
       .slice(0, 6)
       .map((p) => ({ product_id: p.id, name: p.name, slug: p.slug, clicks: p.order_clicks }))
   }
-  const db = await createSupabaseServer()
   const since = new Date(Date.now() - days * 86400000).toISOString()
-  const { data } = await db.from('whatsapp_clicks').select('product_id').eq('context', 'product').gte('created_at', since).limit(20000)
-  const counts = new Map<string, number>()
-  for (const r of (data ?? []) as { product_id: string | null }[]) if (r.product_id) counts.set(r.product_id, (counts.get(r.product_id) ?? 0) + 1)
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([id, clicks]) => ({ product_id: id, name: (byId.get(id)?.name as string) ?? 'Deleted product', slug: (byId.get(id)?.slug as string) ?? '', clicks }))
+  const data = await query<{ product_id: string; clicks: number }>(
+    `select product_id, count(*)::int as clicks from public.whatsapp_clicks
+     where context = 'product' and product_id is not null and created_at >= $1
+     group by product_id order by clicks desc limit 6`,
+    [since],
+  )
+  return data.map(({ product_id: id, clicks }) => ({ product_id: id, name: (byId.get(id)?.name as string) ?? 'Deleted product', slug: (byId.get(id)?.slug as string) ?? '', clicks }))
 }
 
 export async function clickTotals(days = 30): Promise<{ total: number; product: number }> {
-  if (!isSupabaseConfigured) return { total: 412, product: 318 }
-  const db = await createSupabaseServer()
+  if (!isDbConfigured) return { total: 412, product: 318 }
   const since = new Date(Date.now() - days * 86400000).toISOString()
-  const [all, product] = await Promise.all([
-    db.from('whatsapp_clicks').select('id', { count: 'exact', head: true }).gte('created_at', since),
-    db.from('whatsapp_clicks').select('id', { count: 'exact', head: true }).eq('context', 'product').gte('created_at', since),
-  ])
-  return { total: all.count ?? 0, product: product.count ?? 0 }
+  const row = await queryOne<{ total: number; product: number }>(
+    `select count(*)::int as total, (count(*) filter (where context = 'product'))::int as product
+     from public.whatsapp_clicks where created_at >= $1`,
+    [since],
+  )
+  return { total: row?.total ?? 0, product: row?.product ?? 0 }
 }
 
 export async function storageUsageBytes(): Promise<number | null> {
-  if (!isSupabaseConfigured) return 6_200_000
-  const db = await createSupabaseServer()
-  const { data, error } = await db.rpc('storage_usage_bytes')
-  if (error) return null
-  return Number(data ?? 0)
+  if (!isDbConfigured) return 6_200_000
+  return mediaUsageBytes()
 }
 
 export async function listTeam(): Promise<{ user_id: string; email: string | null; full_name: string | null; role: 'owner' | 'editor'; created_at: string }[]> {
-  if (!isSupabaseConfigured) return [{ user_id: 'demo', email: 'demo@loomacomfort.com', full_name: 'Demo admin', role: 'owner', created_at: '2026-10-01T09:00:00.000Z' }]
-  const db = await createSupabaseServer()
-  const { data } = await db.from('admin_users').select('*').order('created_at', { ascending: true })
-  return (data ?? []) as never
+  if (!isDbConfigured) return [{ user_id: 'demo', email: 'demo@loomacomfort.com', full_name: 'Demo admin', role: 'owner', created_at: '2026-10-01T09:00:00.000Z' }]
+  return query('select user_id, email, full_name, role, created_at, last_sign_in_at, (totp_secret is not null) as two_step from public.admin_users order by created_at asc') as never
 }

@@ -302,11 +302,11 @@ export function ProductEditor({ initial, id, relations, demo }: { initial: Parti
                   <button
                     type="button"
                     disabled={Boolean(uploading)}
-                    onClick={() => (demo ? toast.error('Demo mode: connect Supabase to upload photos.') : fileInput.current?.click())}
+                    onClick={() => (demo ? toast.error('Demo mode: connect the database to upload photos.') : fileInput.current?.click())}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => {
                       e.preventDefault()
-                      if (demo) return toast.error('Demo mode: connect Supabase to upload photos.')
+                      if (demo) return toast.error('Demo mode: connect the database to upload photos.')
                       void addFiles(e.dataTransfer.files)
                     }}
                     className="grid aspect-square w-full place-items-center rounded-[2px] border border-dashed border-line-strong bg-beige-soft text-center text-[0.82rem] text-taupe transition-colors hover:border-walnut"

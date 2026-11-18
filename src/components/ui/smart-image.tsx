@@ -18,7 +18,7 @@ interface SmartImageProps {
 }
 
 /**
- * next/image for both demo files (optimised by Next) and Supabase Storage images
+ * next/image for both demo files (optimised by Next) and uploaded Vercel Blob images
  * (pre-sized at upload; served directly through a custom loader).
  */
 export function SmartImage({ asset, sizes, fill, priority, className, alt, quality = 70, blur = false }: SmartImageProps) {

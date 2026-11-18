@@ -1,5 +1,6 @@
 .next
 node_modules
-supabase/seed.sql
+db/seed.sql
+db/setup.sql
 src/lib/demo/images.ts
 src/components/icons.tsx

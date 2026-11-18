@@ -1,8 +1,8 @@
 import { Suspense } from 'react'
 import { AdminShell } from '@/components/admin/admin-shell'
 import { requireAdmin } from '@/lib/admin/auth'
-import { isSupabaseConfigured } from '@/lib/env'
-import { createSupabaseServer } from '@/lib/supabase/server'
+import { queryOne } from '@/lib/db'
+import { isDbConfigured } from '@/lib/env'
 
 // The admin is per-user and always rendered on request.
 export const instant = false
@@ -24,13 +24,12 @@ function AdminLoading() {
 }
 
 async function counts() {
-  if (!isSupabaseConfigured) return { '/admin/inbox': 1, '/admin/reviews': 1 }
-  const db = await createSupabaseServer()
-  const [messages, reviews] = await Promise.all([
-    db.from('contact_messages').select('id', { count: 'exact', head: true }).eq('status', 'new'),
-    db.from('reviews').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-  ])
-  return { '/admin/inbox': messages.count ?? 0, '/admin/reviews': reviews.count ?? 0 }
+  if (!isDbConfigured) return { '/admin/inbox': 1, '/admin/reviews': 1 }
+  const row = await queryOne<{ messages: number; reviews: number }>(
+    `select (select count(*)::int from public.contact_messages where status = 'new') as messages,
+            (select count(*)::int from public.reviews where status = 'pending') as reviews`,
+  )
+  return { '/admin/inbox': row?.messages ?? 0, '/admin/reviews': row?.reviews ?? 0 }
 }
 
 async function Gate({ children }: { children: React.ReactNode }) {

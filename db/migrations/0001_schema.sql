@@ -1,8 +1,11 @@
--- Looma Comfort: core schema
+-- Looma Comfort: core schema (Neon Postgres)
 -- Prices are whole PKR integers. Image fields are jsonb "image assets":
 --   { "ref": "products/<id>/<image>.webp", "alt": "...", "w": 1600, "h": 1067, "blur": "data:..." }
+-- The database is only reached from the website's server (DATABASE_URL), so access control
+-- lives in the app: every admin action checks the signed-in admin first.
 
-create extension if not exists citext with schema extensions;
+create extension if not exists citext;
+create extension if not exists pgcrypto;
 
 do $$ begin
   create type public.stock_status as enum ('in_stock', 'out_of_stock', 'made_to_order');
@@ -24,11 +27,19 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 -- ------------------------------------------------------------------ admins
+-- Passwords are scrypt hashes ("scrypt$<salt>$<hash>"). totp_secret is set once two-step
+-- sign in is confirmed; totp_pending holds a secret while it is being set up.
+-- session_version is bumped to sign out every device (password change, access removed).
 create table if not exists public.admin_users (
-  user_id uuid primary key references auth.users (id) on delete cascade,
-  email text,
+  user_id uuid primary key default gen_random_uuid(),
+  email citext not null unique,
   full_name text,
   role public.admin_role not null default 'editor',
+  password_hash text,
+  totp_secret text,
+  totp_pending text,
+  session_version integer not null default 1,
+  last_sign_in_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -309,7 +320,7 @@ create index if not exists contact_messages_created_idx on public.contact_messag
 
 create table if not exists public.newsletter_subscribers (
   id uuid primary key default gen_random_uuid(),
-  email extensions.citext not null unique check (char_length(email) between 5 and 200),
+  email citext not null unique check (char_length(email) between 5 and 200),
   source text,
   ip_hash text,
   created_at timestamptz not null default now(),
@@ -402,6 +413,7 @@ begin
 end $$;
 
 -- Activity feed for the admin dashboard (only changes made by signed-in admins).
+-- The website sets app.user_id / app.user_email for the transaction of every admin save.
 create or replace function public.log_activity()
 returns trigger
 language plpgsql
@@ -410,7 +422,7 @@ set search_path = ''
 as $$
 declare
   rec jsonb := to_jsonb(coalesce(new, old));
-  uid uuid := auth.uid();
+  uid uuid := nullif(current_setting('app.user_id', true), '')::uuid;
 begin
   if uid is null then
     return coalesce(new, old);
@@ -418,7 +430,7 @@ begin
   insert into public.activity_log (user_id, user_email, action, entity_type, entity_id, entity_label)
   values (
     uid,
-    auth.jwt() ->> 'email',
+    nullif(current_setting('app.user_email', true), ''),
     lower(tg_op),
     tg_table_name,
     case when rec ? 'id' and jsonb_typeof(rec -> 'id') = 'string' then (rec ->> 'id')::uuid end,
@@ -460,3 +472,30 @@ $$;
 drop trigger if exists count_whatsapp_click on public.whatsapp_clicks;
 create trigger count_whatsapp_click after insert on public.whatsapp_clicks
 for each row execute function public.count_whatsapp_click();
+
+-- Returns the current slug for an old slug, only if the target is published.
+create or replace function public.resolve_slug_redirect(p_entity text, p_old_slug text)
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select case r.entity_type
+    when 'product' then (select p.slug from public.products p where p.id = r.entity_id and p.is_visible)
+    when 'category' then (select c.slug from public.categories c where c.id = r.entity_id and c.is_visible)
+    when 'collection' then (select c.slug from public.collections c where c.id = r.entity_id and c.is_visible)
+  end
+  from public.slug_redirects r
+  where r.entity_type = p_entity and r.old_slug = p_old_slug
+  limit 1;
+$$;
+
+-- Keeps tracking tables small on the free tier (called by the daily Vercel cron job).
+create or replace function public.prune_old_rows()
+returns void
+language sql
+set search_path = ''
+as $$
+  delete from public.whatsapp_clicks where created_at < now() - interval '12 months';
+  delete from public.activity_log where created_at < now() - interval '6 months';
+$$;

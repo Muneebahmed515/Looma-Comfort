@@ -3,7 +3,8 @@
 import { z } from 'zod'
 import { normalizePkPhone } from '../format'
 import { clientIpHash, memoryRateLimit, verifyTurnstile } from '../server/spam'
-import { createSecretClient, hasSecretKey } from '../supabase/secret'
+import { insertSql, query, queryOne } from '../db'
+import { isDbConfigured } from '../env'
 
 export interface FormState {
   ok: boolean
@@ -37,11 +38,23 @@ async function guard(fd: FormData, bucket: string): Promise<{ ipHash: string } |
   return { ipHash }
 }
 
+/** Inserts a visitor submission (after spam checks). Returns the error, or null. */
+async function insertRow(table: 'contact_messages' | 'reviews', values: Record<string, unknown>): Promise<unknown> {
+  const { text, params } = insertSql(table, values)
+  return query(text, params).then(
+    () => null,
+    (e: unknown) => {
+      console.error('[form]', e)
+      return e
+    },
+  )
+}
+
 async function recentCount(table: string, ipHash: string, minutes: number): Promise<number> {
-  const db = createSecretClient()
+  const tableName = table === 'reviews' ? 'reviews' : 'contact_messages'
   const since = new Date(Date.now() - minutes * 60 * 1000).toISOString()
-  const { count } = await db.from(table).select('id', { count: 'exact', head: true }).eq('ip_hash', ipHash).gte('created_at', since)
-  return count ?? 0
+  const row = await queryOne<{ n: number }>(`select count(*)::int as n from public.${tableName} where ip_hash = $1 and created_at >= $2`, [ipHash, since])
+  return row?.n ?? 0
 }
 
 // ---------------------------------------------------------------- newsletter
@@ -52,11 +65,12 @@ export async function subscribeNewsletter(_prev: FormState | null, fd: FormData)
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]!.message }
   const g = await guard(fd, 'newsletter')
   if ('ok' in g) return g
-  if (!hasSecretKey) return { ok: true, message: 'Thank you for subscribing. (Demo mode: not saved.)' }
-  const db = createSecretClient()
-  const { error } = await db
-    .from('newsletter_subscribers')
-    .upsert({ email: parsed.data, source: str(fd, 'source') || 'footer', ip_hash: g.ipHash, unsubscribed_at: null }, { onConflict: 'email' })
+  if (!isDbConfigured) return { ok: true, message: 'Thank you for subscribing. (Demo mode: not saved.)' }
+  const error = await query(
+    `insert into public.newsletter_subscribers (email, source, ip_hash, unsubscribed_at) values ($1, $2, $3, null)
+     on conflict (email) do update set source = excluded.source, ip_hash = excluded.ip_hash, unsubscribed_at = null`,
+    [parsed.data, (str(fd, 'source') || 'footer').slice(0, 40), g.ipHash],
+  ).then(() => null, (e: unknown) => e)
   if (error) return { ok: false, message: 'Something went wrong. Please try again.' }
   return { ok: true, message: 'Thank you. You will hear about new arrivals and private offers first.' }
 }
@@ -91,12 +105,11 @@ export async function submitContact(_prev: FormState | null, fd: FormData): Prom
   if (!parsed.success) return { ok: false, message: 'Please check the highlighted fields.', errors: fieldErrors(parsed.error), values: raw }
   const g = await guard(fd, 'contact')
   if ('ok' in g) return { ...g, values: raw }
-  if (hasSecretKey) {
+  if (isDbConfigured) {
     if ((await recentCount('contact_messages', g.ipHash, 60)) >= 6) {
       return { ok: false, message: 'We have received several messages from you already. Please message us on WhatsApp.', values: raw }
     }
-    const db = createSecretClient()
-    const { error } = await db.from('contact_messages').insert({
+    const error = await insertRow('contact_messages', {
       type: 'contact',
       name: parsed.data.name,
       phone: parsed.data.phone,
@@ -137,13 +150,12 @@ export async function submitCustomOrder(_prev: FormState | null, fd: FormData): 
   if (!parsed.success) return { ok: false, message: 'Please check the highlighted fields.', errors: fieldErrors(parsed.error), values: raw }
   const g = await guard(fd, 'custom')
   if ('ok' in g) return { ...g, values: raw }
-  if (hasSecretKey) {
+  if (isDbConfigured) {
     if ((await recentCount('contact_messages', g.ipHash, 60)) >= 6) {
       return { ok: false, message: 'We have received several requests from you already. Please message us on WhatsApp.', values: raw }
     }
     const d = parsed.data
-    const db = createSecretClient()
-    const { error } = await db.from('contact_messages').insert({
+    const error = await insertRow('contact_messages', {
       type: 'custom_order',
       name: d.name,
       phone: d.phone,
@@ -173,13 +185,12 @@ export async function submitReview(_prev: FormState | null, fd: FormData): Promi
   if (!parsed.success) return { ok: false, message: 'Please check the highlighted fields.', errors: fieldErrors(parsed.error), values: raw }
   const g = await guard(fd, 'review')
   if ('ok' in g) return g
-  if (hasSecretKey) {
+  if (isDbConfigured) {
     if ((await recentCount('reviews', g.ipHash, 24 * 60)) >= 3) {
       return { ok: false, message: 'Thank you, we already have your reviews for today.' }
     }
     const d = parsed.data
-    const db = createSecretClient()
-    const { error } = await db.from('reviews').insert({
+    const error = await insertRow('reviews', {
       product_id: d.productId,
       customer_name: d.name,
       city: d.city || null,

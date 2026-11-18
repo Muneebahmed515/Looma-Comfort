@@ -1,14 +1,18 @@
 'use server'
 
 import { updateTag } from 'next/cache'
+import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import QRCode from 'qrcode'
+import { generateTempPassword, generateTotpSecret, hashPassword, totpUri, verifyPassword, verifyTotp } from '../auth/crypto'
+import { SESSION_COOKIE } from '../auth/session'
 import { SITE_TAG } from '../data/site'
+import { col, dbErrorMessage, insertSql, query, queryOne, table, transaction, updateSql, type Row } from '../db'
 import { slugify } from '../format'
-import { STORAGE_WIDTHS, isStorageRef, withWidth } from '../images'
-import { createSecretClient, hasSecretKey } from '../supabase/secret'
-import { createSupabaseServer } from '../supabase/server'
+import { isStorageRef } from '../images'
+import { deleteMedia } from '../media'
 import type { HomeSectionRow, ImageAsset, OptionGroup, ProductImage, Spec } from '../types'
-import { adminForAction, type ActionResult } from './auth'
+import { actorOf, adminForAction, type ActionResult, type AdminRow } from './auth'
 import { buildPayload, coerceField, coerceImage } from './coerce'
 import { allFields, type FieldDef } from './fields'
 import { RESOURCES, SETTINGS_GROUPS } from './resources'
@@ -19,11 +23,14 @@ function publish() {
   updateTag(SITE_TAG)
 }
 
-function friendlyDbError(message: string): string {
+function friendlyDbError(e: unknown): string {
+  const message = dbErrorMessage(e)
   if (/duplicate key.*slug/i.test(message)) return 'That URL is already used by another item. Please choose a different one.'
   if (/duplicate key.*sku/i.test(message)) return 'That SKU is already used by another product.'
+  if (/duplicate key.*email/i.test(message)) return 'That email address is already in use.'
   if (/violates foreign key/i.test(message)) return 'This item is still used elsewhere. Remove those links first.'
-  if (/row-level security/i.test(message)) return 'You do not have permission to change this.'
+  if (/violates check constraint/i.test(message)) return 'One of the values is not allowed. Please check the form.'
+  console.error('[db]', message)
   return 'Could not save. Please try again.'
 }
 
@@ -39,23 +46,12 @@ function collectRefs(value: unknown, out = new Set<string>()): Set<string> {
   return out
 }
 
-/** Deletes every generated size of images that are no longer used. Never blocks a save. */
-async function removeStorage(refs: string[]) {
-  if (!refs.length) return
-  try {
-    const db = await createSupabaseServer()
-    const byBucket = new Map<string, string[]>()
-    for (const ref of refs) {
-      const [bucket, ...rest] = ref.split('/')
-      const path = rest.join('/')
-      const list = byBucket.get(bucket!) ?? []
-      for (const w of STORAGE_WIDTHS) list.push(withWidth(path, w))
-      byBucket.set(bucket!, list)
-    }
-    await Promise.all([...byBucket.entries()].map(([bucket, paths]) => db.storage.from(bucket).remove(paths)))
-  } catch {
-    // Orphaned files are harmless; the dashboard shows storage use.
-  }
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const validIds = (ids: string[]) => (Array.isArray(ids) ? ids : []).filter((x) => typeof x === 'string' && UUID.test(x))
+
+async function nextSortOrder(tableName: string): Promise<number> {
+  const row = await queryOne<{ n: number }>(`select coalesce(max(sort_order), -1) + 1 as n from ${table(tableName)}`)
+  return Number(row?.n ?? 0)
 }
 
 // ---------------------------------------------------------------- generic resources
@@ -66,6 +62,7 @@ export async function saveResource(key: string, id: string | null, values: Value
   const def = RESOURCES[key]
   if (!def) return { ok: false, message: 'Unknown section.' }
   if (!id && !def.canCreate) return { ok: false, message: 'New items cannot be added here.' }
+  if (id && !UUID.test(id)) return { ok: false, message: 'Item not found.' }
   const { payload, errors } = buildPayload(allFields(def), values)
   if (Object.keys(errors).length) return { ok: false, message: 'Please check the highlighted fields.', errors }
   if (def.key === 'categories' && id && payload.parent_id === id) return { ok: false, message: 'A category cannot belong to itself.', errors: { parent_id: 'Choose a different group.' } }
@@ -74,26 +71,24 @@ export async function saveResource(key: string, id: string | null, values: Value
   if (payload.starts_at && payload.ends_at && String(payload.ends_at) <= String(payload.starts_at))
     return { ok: false, message: 'The end must be after the start.', errors: { ends_at: 'Must be after the start time.' } }
 
-  const db = await createSupabaseServer()
   let before: Values | null = null
-  if (id) {
-    const { data } = await db.from(def.table).select('*').eq('id', id).maybeSingle()
-    before = data as Values | null
-    const { error } = await db.from(def.table).update(payload).eq('id', id)
-    if (error) return { ok: false, message: friendlyDbError(error.message) }
-  } else {
-    if (def.orderable) {
-      const { data: last } = await db.from(def.table).select('sort_order').order('sort_order', { ascending: false }).limit(1).maybeSingle()
-      payload.sort_order = ((last?.sort_order as number | undefined) ?? -1) + 1
+  try {
+    if (id) {
+      before = await queryOne(`select * from ${table(def.table)} where id = $1`, [id])
+      if (!before) return { ok: false, message: 'Item not found.' }
+      await transaction([updateSql(def.table, payload, { column: 'id', value: id })], actorOf(auth.admin))
+    } else {
+      if (def.orderable) payload.sort_order = await nextSortOrder(def.table)
+      const [rows] = await transaction([insertSql(def.table, { ...(def.defaults ?? {}), ...payload })], actorOf(auth.admin))
+      id = String(rows![0]!.id)
     }
-    const { data, error } = await db.from(def.table).insert({ ...(def.defaults ?? {}), ...payload }).select('id').single()
-    if (error) return { ok: false, message: friendlyDbError(error.message) }
-    id = data.id as string
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
   }
   if (before) {
     // Delete image files that this save replaced or removed.
     const after = collectRefs({ ...before, ...payload })
-    await removeStorage([...collectRefs(before)].filter((r) => !after.has(r)))
+    await deleteMedia([...collectRefs(before)].filter((r) => !after.has(r)))
   }
   publish()
   return { ok: true, message: 'Saved. The website is updated.', data: { id: id! } }
@@ -104,11 +99,15 @@ export async function deleteResource(key: string, id: string): Promise<ActionRes
   if ('error' in auth) return auth.error
   const def = RESOURCES[key]
   if (!def?.canDelete) return { ok: false, message: 'This cannot be deleted.' }
-  const db = await createSupabaseServer()
-  const { data: before } = await db.from(def.table).select('*').eq('id', id).maybeSingle()
-  const { error } = await db.from(def.table).delete().eq('id', id)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
-  await removeStorage([...collectRefs(before)])
+  if (!UUID.test(id)) return { ok: false, message: 'Item not found.' }
+  let before: Row | undefined
+  try {
+    const [rows] = await transaction([{ text: `delete from ${table(def.table)} where id = $1 returning *`, params: [id] }], actorOf(auth.admin))
+    before = rows?.[0]
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
+  await deleteMedia([...collectRefs(before)])
   publish()
   return { ok: true, message: 'Deleted.' }
 }
@@ -116,12 +115,23 @@ export async function deleteResource(key: string, id: string): Promise<ActionRes
 export async function reorderResource(key: string, ids: string[]): Promise<ActionResult> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  const table = key === 'home_sections' ? 'home_sections' : key === 'products' ? 'products' : RESOURCES[key]?.table
-  if (!table) return { ok: false, message: 'Unknown section.' }
-  const db = await createSupabaseServer()
-  const results = await Promise.all(ids.slice(0, 500).map((rowId, i) => db.from(table).update({ sort_order: i }).eq('id', rowId)))
-  const failed = results.find((r) => r.error)
-  if (failed?.error) return { ok: false, message: friendlyDbError(failed.error.message) }
+  const tableName = key === 'home_sections' ? 'home_sections' : key === 'products' ? 'products' : RESOURCES[key]?.table
+  if (!tableName) return { ok: false, message: 'Unknown section.' }
+  const clean = validIds(ids).slice(0, 500)
+  try {
+    // One statement: sort_order = position in the list.
+    await transaction(
+      [
+        {
+          text: `update ${table(tableName)} t set sort_order = x.ord - 1 from unnest($1::uuid[]) with ordinality as x(id, ord) where t.id = x.id`,
+          params: [clean],
+        },
+      ],
+      actorOf(auth.admin),
+    )
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   publish()
   return { ok: true, message: 'Order saved.' }
 }
@@ -129,14 +139,18 @@ export async function reorderResource(key: string, ids: string[]): Promise<Actio
 export async function toggleResource(key: string, id: string, field: string, value: boolean): Promise<ActionResult> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  const table = key === 'products' ? 'products' : RESOURCES[key]?.table
+  const tableName = key === 'products' ? 'products' : RESOURCES[key]?.table
   const allowed = ['is_visible', 'is_active', 'show_in_menu', 'is_featured', 'is_best_seller', 'is_new_arrival']
-  if (!table || !allowed.includes(field)) return { ok: false, message: 'Not allowed.' }
-  const db = await createSupabaseServer()
-  const patch: Values = { [field]: value }
-  if (table === 'products' && field === 'is_visible' && value) patch.published_at = new Date().toISOString()
-  const { error } = await db.from(table).update(patch).eq('id', id)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  if (!tableName || !allowed.includes(field) || !UUID.test(id)) return { ok: false, message: 'Not allowed.' }
+  try {
+    const statements = [updateSql(tableName, { [field]: Boolean(value) }, { column: 'id', value: id })]
+    if (tableName === 'products' && field === 'is_visible' && value) {
+      statements.push({ text: 'update public.products set published_at = now() where id = $1 and published_at is null', params: [id] })
+    }
+    await transaction(statements, actorOf(auth.admin))
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   publish()
   return { ok: true, message: value ? 'Switched on.' : 'Switched off.' }
 }
@@ -144,9 +158,12 @@ export async function toggleResource(key: string, id: string, field: string, val
 export async function setReviewStatus(id: string, status: 'approved' | 'hidden' | 'pending'): Promise<ActionResult> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  const db = await createSupabaseServer()
-  const { error } = await db.from('reviews').update({ status }).eq('id', id)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  if (!['approved', 'hidden', 'pending'].includes(status) || !UUID.test(id)) return { ok: false, message: 'Not allowed.' }
+  try {
+    await transaction([updateSql('reviews', { status }, { column: 'id', value: id })], actorOf(auth.admin))
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   publish()
   return { ok: true, message: status === 'approved' ? 'Review approved.' : status === 'hidden' ? 'Review hidden.' : 'Review moved back to pending.' }
 }
@@ -267,6 +284,7 @@ function cleanImages(raw: unknown): ProductImage[] {
 export async function saveProduct(id: string | null, input: ProductInput): Promise<ActionResult<{ id: string; slug: string }>> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
+  if (id && !UUID.test(id)) return { ok: false, message: 'Product not found.' }
   const values = input as unknown as Values
   const { payload, errors } = buildPayload(PRODUCT_FIELDS, values)
   if (payload.sale_price != null && payload.price != null && Number(payload.sale_price) >= Number(payload.price)) {
@@ -279,30 +297,30 @@ export async function saveProduct(id: string | null, input: ProductInput): Promi
   payload.options = cleanOptions(input.options)
   payload.specifications = cleanSpecs(input.specifications)
   if (!payload.sku) payload.sku = null
-  const db = await createSupabaseServer()
   let before: Values | null = null
 
-  if (id) {
-    const { data } = await db.from('products').select('*').eq('id', id).maybeSingle()
-    before = data as Values | null
-    if (payload.is_visible && !before?.published_at) payload.published_at = new Date().toISOString()
-    payload.updated_by = auth.admin.id
-    const { error } = await db.from('products').update(payload).eq('id', id)
-    if (error) return { ok: false, message: friendlyDbError(error.message) }
-  } else {
-    const { data: last } = await db.from('products').select('sort_order').order('sort_order', { ascending: false }).limit(1).maybeSingle()
-    payload.sort_order = ((last?.sort_order as number | undefined) ?? -1) + 1
-    payload.created_by = auth.admin.id
-    payload.updated_by = auth.admin.id
-    if (payload.is_visible) payload.published_at = new Date().toISOString()
-    const { data, error } = await db.from('products').insert(payload).select('id').single()
-    if (error) return { ok: false, message: friendlyDbError(error.message) }
-    id = data.id as string
+  try {
+    if (id) {
+      before = await queryOne('select * from public.products where id = $1', [id])
+      if (!before) return { ok: false, message: 'Product not found.' }
+      if (payload.is_visible && !before.published_at) payload.published_at = new Date().toISOString()
+      payload.updated_by = auth.admin.id
+      await transaction([updateSql('products', payload, { column: 'id', value: id })], actorOf(auth.admin))
+    } else {
+      payload.sort_order = await nextSortOrder('products')
+      payload.created_by = auth.admin.id
+      payload.updated_by = auth.admin.id
+      if (payload.is_visible) payload.published_at = new Date().toISOString()
+      const [rows] = await transaction([insertSql('products', payload)], actorOf(auth.admin))
+      id = String(rows![0]!.id)
+    }
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
   }
 
   if (before) {
     const keep = collectRefs(payload.images)
-    await removeStorage([...collectRefs(before.images)].filter((r) => !keep.has(r)))
+    await deleteMedia([...collectRefs(before.images)].filter((r) => !keep.has(r)))
   }
   publish()
   return { ok: true, message: payload.is_visible ? 'Published. The website is updated.' : 'Saved as a draft (hidden from the website).', data: { id: id!, slug: String(payload.slug) } }
@@ -311,36 +329,45 @@ export async function saveProduct(id: string | null, input: ProductInput): Promi
 export async function duplicateProduct(id: string): Promise<ActionResult<{ id: string }>> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  const db = await createSupabaseServer()
-  const { data: src } = await db.from('products').select('*').eq('id', id).maybeSingle()
+  if (!UUID.test(id)) return { ok: false, message: 'Product not found.' }
+  const src = await queryOne('select * from public.products where id = $1', [id])
   if (!src) return { ok: false, message: 'Product not found.' }
-  const copy = { ...(src as Values) }
+  const copy = { ...src }
   for (const k of ['id', 'created_at', 'updated_at', 'published_at']) delete copy[k]
   copy.name = `${src.name} (copy)`
   copy.slug = `${src.slug}-copy-${Math.random().toString(36).slice(2, 6)}`
   copy.sku = src.sku ? `${src.sku}-COPY-${Math.random().toString(36).slice(2, 5).toUpperCase()}` : null
   copy.is_visible = false
   copy.created_by = auth.admin.id
+  copy.updated_by = auth.admin.id
   // The copy shares image files with the original; deleting either keeps files the other still uses.
-  const { data, error } = await db.from('products').insert(copy).select('id').single()
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
-  publish()
-  return { ok: true, message: 'Duplicated as a hidden draft.', data: { id: data.id as string } }
+  try {
+    const [rows] = await transaction([insertSql('products', copy)], actorOf(auth.admin))
+    publish()
+    return { ok: true, message: 'Duplicated as a hidden draft.', data: { id: String(rows![0]!.id) } }
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
 }
 
 export async function deleteProducts(ids: string[]): Promise<ActionResult> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  const db = await createSupabaseServer()
-  const { data: rows } = await db.from('products').select('id, images').in('id', ids)
-  const { error } = await db.from('products').delete().in('id', ids)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  const clean = validIds(ids)
+  if (!clean.length) return { ok: false, message: 'Nothing to delete.' }
+  let deleted: Row[]
+  try {
+    const [rows] = await transaction([{ text: 'delete from public.products where id = any($1::uuid[]) returning id, images', params: [clean] }], actorOf(auth.admin))
+    deleted = rows ?? []
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   // Keep files still used by other products (e.g. duplicates).
-  const { data: remaining } = await db.from('products').select('images').limit(5000)
-  const stillUsed = collectRefs((remaining ?? []).map((r) => r.images))
-  await removeStorage([...collectRefs((rows ?? []).map((r) => r.images))].filter((r) => !stillUsed.has(r)))
+  const remaining = await query<{ images: unknown }>('select images from public.products limit 5000')
+  const stillUsed = collectRefs(remaining.map((r) => r.images))
+  await deleteMedia([...collectRefs(deleted.map((r) => r.images))].filter((r) => !stillUsed.has(r)))
   publish()
-  return { ok: true, message: ids.length === 1 ? 'Product deleted.' : `${ids.length} products deleted.` }
+  return { ok: true, message: clean.length === 1 ? 'Product deleted.' : `${clean.length} products deleted.` }
 }
 
 export async function bulkUpdateProducts(ids: string[], patch: { is_visible?: boolean; is_best_seller?: boolean; is_new_arrival?: boolean; is_featured?: boolean; stock_status?: string }): Promise<ActionResult> {
@@ -349,12 +376,19 @@ export async function bulkUpdateProducts(ids: string[], patch: { is_visible?: bo
   const clean: Values = {}
   for (const k of ['is_visible', 'is_best_seller', 'is_new_arrival', 'is_featured'] as const) if (typeof patch[k] === 'boolean') clean[k] = patch[k]
   if (patch.stock_status && ['in_stock', 'out_of_stock', 'made_to_order'].includes(patch.stock_status)) clean.stock_status = patch.stock_status
-  if (!Object.keys(clean).length || !ids.length) return { ok: false, message: 'Nothing to change.' }
-  const db = await createSupabaseServer()
-  const { error } = await db.from('products').update(clean).in('id', ids)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  const productIds = validIds(ids)
+  if (!Object.keys(clean).length || !productIds.length) return { ok: false, message: 'Nothing to change.' }
+  try {
+    const statements = [updateSql('products', clean, { column: 'id', in: productIds })]
+    if (clean.is_visible === true) {
+      statements.push({ text: 'update public.products set published_at = now() where id = any($1::uuid[]) and published_at is null', params: [productIds] })
+    }
+    await transaction(statements, actorOf(auth.admin))
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   publish()
-  return { ok: true, message: `${ids.length} ${ids.length === 1 ? 'product' : 'products'} updated.` }
+  return { ok: true, message: `${productIds.length} ${productIds.length === 1 ? 'product' : 'products'} updated.` }
 }
 
 // ---------------------------------------------------------------- settings + homepage
@@ -376,9 +410,11 @@ export async function saveSettings(values: Values): Promise<ActionResult> {
   }
   payload.search_synonyms = synonyms
   payload.updated_by = auth.admin.id
-  const db = await createSupabaseServer()
-  const { error } = await db.from('site_settings').update(payload).eq('id', 1)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  try {
+    await transaction([updateSql('site_settings', payload, { column: 'id', value: 1 })], actorOf(auth.admin))
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   publish()
   return { ok: true, message: 'Settings saved. The website is updated.' }
 }
@@ -387,7 +423,6 @@ export async function saveHomeSections(sections: HomeSectionRow[]): Promise<Acti
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
   const types = ['hero', 'categories', 'products', 'promo', 'collection', 'usps', 'testimonials', 'story']
-  const db = await createSupabaseServer()
   const rows = sections.slice(0, 30).map((s, i) => {
     const settings = (s.settings ?? {}) as Values
     const img = coerceImage(settings.image)
@@ -400,7 +435,7 @@ export async function saveHomeSections(sections: HomeSectionRow[]): Promise<Acti
     const [category_ids] = coerceField({ name: 'c', label: 'c', type: 'relations' }, settings.category_ids)
     const [product_ids] = coerceField({ name: 'p', label: 'p', type: 'relations' }, settings.product_ids)
     return {
-      id: s.id,
+      id: typeof s.id === 'string' && UUID.test(s.id) ? s.id : crypto.randomUUID(),
       type: types.includes(s.type) ? s.type : 'products',
       eyebrow: s.eyebrow?.trim() || null,
       title: s.title?.trim() || null,
@@ -418,10 +453,25 @@ export async function saveHomeSections(sections: HomeSectionRow[]): Promise<Acti
       },
     }
   })
-  const { error } = await db.from('home_sections').upsert(rows, { onConflict: 'id' })
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
   const keep = rows.map((r) => r.id)
-  if (keep.length) await db.from('home_sections').delete().not('id', 'in', `(${keep.join(',')})`)
+  try {
+    await transaction(
+      [
+        ...rows.map((r) => {
+          const ins = insertSql('home_sections', r)
+          const cols = Object.keys(r).filter((k) => k !== 'id')
+          return {
+            text: `${ins.text.replace(/ returning id$/, '')} on conflict (id) do update set ${cols.map((c) => `${col(c)} = excluded.${col(c)}`).join(', ')}`,
+            params: ins.params,
+          }
+        }),
+        { text: 'delete from public.home_sections where not (id = any($1::uuid[]))', params: [keep] },
+      ],
+      actorOf(auth.admin),
+    )
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   publish()
   return { ok: true, message: 'Home page saved. The website is updated.' }
 }
@@ -431,73 +481,139 @@ export async function saveHomeSections(sections: HomeSectionRow[]): Promise<Acti
 export async function setMessageStatus(id: string, status: 'new' | 'read' | 'replied' | 'archived'): Promise<ActionResult> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  const db = await createSupabaseServer()
-  const { error } = await db.from('contact_messages').update({ status }).eq('id', id)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  if (!['new', 'read', 'replied', 'archived'].includes(status) || !UUID.test(id)) return { ok: false, message: 'Not allowed.' }
+  try {
+    await query('update public.contact_messages set status = $1 where id = $2', [status, id])
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   return { ok: true }
 }
 
 export async function deleteMessage(id: string): Promise<ActionResult> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  const db = await createSupabaseServer()
-  const { error } = await db.from('contact_messages').delete().eq('id', id)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  if (!UUID.test(id)) return { ok: false, message: 'Message not found.' }
+  try {
+    await query('delete from public.contact_messages where id = $1', [id])
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   return { ok: true, message: 'Message deleted.' }
 }
 
 export async function deleteSubscriber(id: string): Promise<ActionResult> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  const db = await createSupabaseServer()
-  const { error } = await db.from('newsletter_subscribers').delete().eq('id', id)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  if (!UUID.test(id)) return { ok: false, message: 'Subscriber not found.' }
+  try {
+    await query('delete from public.newsletter_subscribers where id = $1', [id])
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   return { ok: true, message: 'Subscriber removed.' }
 }
 
-// ---------------------------------------------------------------- team + account
+// ---------------------------------------------------------------- team
 
-export async function inviteAdmin(email: string, role: 'owner' | 'editor', fullName: string): Promise<ActionResult> {
+/**
+ * Adds a team member with a one-time password that the owner passes on to them
+ * (there is no email service). They change it under Account after signing in.
+ */
+export async function inviteAdmin(email: string, role: 'owner' | 'editor', fullName: string): Promise<ActionResult<{ password: string }>> {
   const auth = await adminForAction({ owner: true })
   if ('error' in auth) return auth.error
-  const clean = email.trim().toLowerCase()
+  const clean = String(email ?? '').trim().toLowerCase()
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) return { ok: false, message: 'Please enter a valid email address.' }
-  if (!hasSecretKey) return { ok: false, message: 'Add SUPABASE_SECRET_KEY to the environment to invite people from here.' }
-  const admin = createSecretClient()
-  const site = process.env.NEXT_PUBLIC_SITE_URL ?? ''
-  const { data, error } = await admin.auth.admin.inviteUserByEmail(clean, { redirectTo: `${site}/auth/callback?next=/admin/reset-password` })
-  let userId = data?.user?.id
-  if (error) {
-    // Already registered: look the user up and just grant access.
-    const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
-    userId = list?.users.find((u) => u.email?.toLowerCase() === clean)?.id
-    if (!userId) return { ok: false, message: error.message }
+  const existing = await queryOne('select user_id from public.admin_users where email = $1', [clean])
+  if (existing) return { ok: false, message: 'This person already has access.' }
+  const password = generateTempPassword()
+  try {
+    await query('insert into public.admin_users (email, role, full_name, password_hash) values ($1, $2, $3, $4)', [
+      clean,
+      role === 'owner' ? 'owner' : 'editor',
+      String(fullName ?? '').trim() || null,
+      await hashPassword(password),
+    ])
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
   }
-  const { error: insertError } = await admin
-    .from('admin_users')
-    .upsert({ user_id: userId, email: clean, role: role === 'owner' ? 'owner' : 'editor', full_name: fullName.trim() || null }, { onConflict: 'user_id' })
-  if (insertError) return { ok: false, message: friendlyDbError(insertError.message) }
-  return { ok: true, message: `Invitation sent to ${clean}.` }
+  return { ok: true, message: `Added ${clean}.`, data: { password } }
+}
+
+/** Owner only: gives a team member a new one-time password and signs them out everywhere. */
+export async function resetMemberPassword(userId: string): Promise<ActionResult<{ password: string }>> {
+  const auth = await adminForAction({ owner: true })
+  if ('error' in auth) return auth.error
+  if (!UUID.test(userId)) return { ok: false, message: 'Not found.' }
+  if (userId === auth.admin.id) return { ok: false, message: 'Change your own password under Account.' }
+  const password = generateTempPassword()
+  const rows = await query(
+    'update public.admin_users set password_hash = $1, totp_secret = null, totp_pending = null, session_version = session_version + 1 where user_id = $2 returning user_id',
+    [await hashPassword(password), userId],
+  )
+  if (!rows.length) return { ok: false, message: 'Not found.' }
+  return { ok: true, message: 'New one-time password created.', data: { password } }
 }
 
 export async function removeAdmin(userId: string): Promise<ActionResult> {
   const auth = await adminForAction({ owner: true })
   if ('error' in auth) return auth.error
   if (userId === auth.admin.id) return { ok: false, message: 'You cannot remove yourself.' }
-  const db = await createSupabaseServer()
-  const { error } = await db.from('admin_users').delete().eq('user_id', userId)
-  if (error) return { ok: false, message: friendlyDbError(error.message) }
+  if (!UUID.test(userId)) return { ok: false, message: 'Not found.' }
+  try {
+    await query('delete from public.admin_users where user_id = $1', [userId])
+  } catch (e) {
+    return { ok: false, message: friendlyDbError(e) }
+  }
   return { ok: true, message: 'Access removed.' }
 }
 
-export async function changePassword(password: string): Promise<ActionResult> {
+// ---------------------------------------------------------------- account
+
+export async function changePassword(password: string, current: string): Promise<ActionResult> {
   const auth = await adminForAction()
   if ('error' in auth) return auth.error
-  if (password.length < 10) return { ok: false, message: 'Use at least 10 characters.' }
-  const db = await createSupabaseServer()
-  const { error } = await db.auth.updateUser({ password })
-  if (error) return { ok: false, message: error.message }
+  if (String(password ?? '').length < 10) return { ok: false, message: 'Use at least 10 characters.' }
+  const row = await queryOne<AdminRow>('select password_hash from public.admin_users where user_id = $1', [auth.admin.id])
+  if (!(await verifyPassword(String(current ?? ''), row?.password_hash))) return { ok: false, message: 'Your current password is not correct.' }
+  await query('update public.admin_users set password_hash = $1 where user_id = $2', [await hashPassword(password), auth.admin.id])
   return { ok: true, message: 'Password updated.' }
+}
+
+export async function twoStepStatus(): Promise<ActionResult<{ enabled: boolean }>> {
+  const auth = await adminForAction()
+  if ('error' in auth) return auth.error
+  const row = await queryOne<{ enabled: boolean }>('select (totp_secret is not null) as enabled from public.admin_users where user_id = $1', [auth.admin.id])
+  return { ok: true, data: { enabled: Boolean(row?.enabled) } }
+}
+
+export async function startTwoStepSetup(): Promise<ActionResult<{ qr: string; secret: string }>> {
+  const auth = await adminForAction()
+  if ('error' in auth) return auth.error
+  const secret = generateTotpSecret()
+  await query('update public.admin_users set totp_pending = $1 where user_id = $2', [secret, auth.admin.id])
+  const qr = await QRCode.toDataURL(totpUri(secret, auth.admin.email), { margin: 1, width: 320 })
+  return { ok: true, data: { qr, secret } }
+}
+
+export async function confirmTwoStepSetup(code: string): Promise<ActionResult> {
+  const auth = await adminForAction()
+  if ('error' in auth) return auth.error
+  const row = await queryOne<{ totp_pending: string | null }>('select totp_pending from public.admin_users where user_id = $1', [auth.admin.id])
+  if (!row?.totp_pending || !verifyTotp(row.totp_pending, String(code ?? ''))) return { ok: false, message: 'That code did not work. Try again.' }
+  // This session already passed sign in, so it stays valid.
+  await query('update public.admin_users set totp_secret = totp_pending, totp_pending = null where user_id = $1', [auth.admin.id])
+  return { ok: true, message: 'Two-step sign in is on.' }
+}
+
+export async function disableTwoStep(code: string): Promise<ActionResult> {
+  const auth = await adminForAction()
+  if ('error' in auth) return auth.error
+  const row = await queryOne<{ totp_secret: string | null }>('select totp_secret from public.admin_users where user_id = $1', [auth.admin.id])
+  if (row?.totp_secret && !verifyTotp(row.totp_secret, String(code ?? ''))) return { ok: false, message: 'That code did not work. Try again.' }
+  await query('update public.admin_users set totp_secret = null, totp_pending = null where user_id = $1', [auth.admin.id])
+  return { ok: true, message: 'Two-step sign in turned off.' }
 }
 
 export async function refreshWebsite(): Promise<ActionResult> {
@@ -508,8 +624,7 @@ export async function refreshWebsite(): Promise<ActionResult> {
 }
 
 export async function signOut() {
-  const db = await createSupabaseServer()
-  await db.auth.signOut()
+  ;(await cookies()).delete(SESSION_COOKIE)
   redirect('/admin/login')
 }
 
